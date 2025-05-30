@@ -71,7 +71,7 @@ namespace EventEaseTestApp.Controllers
             }
             if (_context.Booking == null)
             {
-                return Problem("Entity set 'EventEaseTestAppContext.'  is null.");
+                return Problem("Entity set 'CLDV6211_POE_PartThreeContext.'  is null.");
             }
 
             var bookings = from m in _context.Booking
