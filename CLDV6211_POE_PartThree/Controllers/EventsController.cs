@@ -11,7 +11,7 @@ using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.AspNetCore.Components.Forms;
 
 
-namespace EventEaseTestApp.Controllers
+namespace CLDV6211_POE_PartThree.Controllers
 {
     public class EventsController : Controller
     {
@@ -28,7 +28,7 @@ namespace EventEaseTestApp.Controllers
 
             if (_context.Event == null)
             {
-                return Problem("Entity set 'EventEaseTestAppContext.'  is null.");
+                return Problem("Entity set 'CLDV6211_POE_PartThreeContext.'  is null.");
             }
 
             var events = from m in _context.Event

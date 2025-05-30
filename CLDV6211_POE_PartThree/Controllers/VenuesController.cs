@@ -7,23 +7,54 @@ using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.EntityFrameworkCore;
 using CLDV6211_POE_PartThree.Data;
 using CLDV6211_POE_PartThree.Models;
+using Azure.Storage.Blobs;
+using System.IO;
+using System.Net;
+using Humanizer.Localisation;
+using Azure.Storage.Blobs.Models;
+using static System.Net.Mime.MediaTypeNames;
+using System.Reflection.Metadata;
+using static System.Reflection.Metadata.BlobBuilder;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+
 
 namespace CLDV6211_POE_PartThree.Controllers
 {
     public class VenuesController : Controller
     {
         private readonly CLDV6211_POE_PartThreeContext _context;
+        private readonly BlobServiceClient _blobServiceClient;
+        private readonly string _containerName = "catoos";
 
-        public VenuesController(CLDV6211_POE_PartThreeContext context)
+
+        public VenuesController(CLDV6211_POE_PartThreeContext context, IConfiguration config)
         {
             _context = context;
+            _blobServiceClient = new BlobServiceClient(config["BlobStorage:ConnectionString"]);
+            _containerName = config["BlobStorage:ContainerName"];
         }
 
         // GET: Venues
-        public async Task<IActionResult> Index()
+        public async Task<IActionResult> Index(string searchString)
         {
-            return View(await _context.Venue.ToListAsync());
+
+            if (_context.Venue == null)
+            {
+                return Problem("Entity set 'CLDV6211_POE_PartThreeContext.'  is null.");
+            }
+
+            var venues = from m in _context.Venue
+                         select m;
+
+            if (!String.IsNullOrEmpty(searchString))
+            {
+                venues = venues.Where(s => s.VenueName!.ToUpper().Contains(searchString.ToUpper()));
+            }
+
+
+            return View(await venues.ToListAsync());
         }
+
 
         // GET: Venues/Details/5
         public async Task<IActionResult> Details(int? id)
@@ -46,6 +77,7 @@ namespace CLDV6211_POE_PartThree.Controllers
         // GET: Venues/Create
         public IActionResult Create()
         {
+
             return View();
         }
 
@@ -54,19 +86,28 @@ namespace CLDV6211_POE_PartThree.Controllers
         // For more details, see http://go.microsoft.com/fwlink/?LinkId=317598.
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public async Task<IActionResult> Create([Bind("VenueId,VenueName,Location,Capacity,imageUrl")] Venue venue)
+        public async Task<IActionResult> Create([Bind("imageUrl,VenueName,Location,Capacity")] IFormFile image, Venue venue)
         {
-            if (ModelState.IsValid)
-            {
-                _context.Add(venue);
-                await _context.SaveChangesAsync();
-                return RedirectToAction(nameof(Index));
-            }
-            return View(venue);
+
+            if (image == null && image.Length > 0) return BadRequest("Image file is required.");
+
+            var container = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var blob = container.GetBlobClient(image.FileName);
+
+            using var stream = image.OpenReadStream();
+            await blob.UploadAsync(stream, overwrite: true);
+
+
+            venue.imageUrl = blob.Uri.ToString();
+            _context.Add(venue);
+            await _context.SaveChangesAsync();
+            return RedirectToAction(nameof(Index));
         }
 
+
+
         // GET: Venues/Edit/5
-        public async Task<IActionResult> Edit(int? id)
+        public async Task<IActionResult> Edit(int? id, IFormFile image)
         {
             if (id == null)
             {
@@ -78,6 +119,8 @@ namespace CLDV6211_POE_PartThree.Controllers
             {
                 return NotFound();
             }
+
+
             return View(venue);
         }
 
@@ -86,19 +129,34 @@ namespace CLDV6211_POE_PartThree.Controllers
         // For more details, see http://go.microsoft.com/fwlink/?LinkId=317598.
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public async Task<IActionResult> Edit(int id, [Bind("VenueId,VenueName,Location,Capacity,imageUrl")] Venue venue)
+        public async Task<IActionResult> Edit(int id, [Bind("VenueId,VenueName,Location,Capacity,imageUrl")] Venue venue, IFormFile? image)
         {
             if (id != venue.VenueId)
             {
                 return NotFound();
             }
-
             if (ModelState.IsValid)
             {
                 try
                 {
+                    if (image != null)
+                    {
+                        var container = _blobServiceClient.GetBlobContainerClient(_containerName);
+
+
+
+                        // Upload the new image
+                        var newBlob = container.GetBlobClient(image.FileName);
+                        using var stream = image.OpenReadStream();
+                        await newBlob.UploadAsync(stream, overwrite: true);
+
+                        venue.imageUrl = newBlob.Uri.ToString();
+                    }
                     _context.Update(venue);
                     await _context.SaveChangesAsync();
+
+
+
                 }
                 catch (DbUpdateConcurrencyException)
                 {
@@ -116,6 +174,7 @@ namespace CLDV6211_POE_PartThree.Controllers
             return View(venue);
         }
 
+
         // GET: Venues/Delete/5
         public async Task<IActionResult> Delete(int? id)
         {
@@ -131,6 +190,12 @@ namespace CLDV6211_POE_PartThree.Controllers
                 return NotFound();
             }
 
+            var container = _blobServiceClient.GetBlobContainerClient(_containerName);
+
+            var blobUri = new Uri(venue.imageUrl);
+            var blobName = WebUtility.UrlDecode(blobUri.Segments.Last());
+            var blob = container.GetBlobClient(blobName);
+
             return View(venue);
         }
 
@@ -139,15 +204,32 @@ namespace CLDV6211_POE_PartThree.Controllers
         [ValidateAntiForgeryToken]
         public async Task<IActionResult> DeleteConfirmed(int id)
         {
-            var venue = await _context.Venue.FindAsync(id);
-            if (venue != null)
+            bool isBookingExists = await _context.Booking.AnyAsync(b => b.VenueId == id);
+
+
+            // Check if there are any bookings associated with the venue
+            if (isBookingExists)
             {
-                _context.Venue.Remove(venue);
+                var @venue = await _context.Venue.FindAsync(id);
+                ModelState.AddModelError("", "Cannot delete venue as it has associated bookings.");
+                return View(@venue);
             }
 
+
+            var venueToDelete = await _context.Venue.FindAsync(id);
+
+            var container = _blobServiceClient.GetBlobContainerClient(_containerName);
+
+            var blobUri = new Uri(venueToDelete.imageUrl);
+            var blobName = WebUtility.UrlDecode(blobUri.Segments.Last());
+            var blob = container.GetBlobClient(blobName);
+
+            _context.Venue.Remove(venueToDelete);
+            await blob.DeleteIfExistsAsync(DeleteSnapshotsOption.IncludeSnapshots);
             await _context.SaveChangesAsync();
             return RedirectToAction(nameof(Index));
         }
+
 
         private bool VenueExists(int id)
         {
