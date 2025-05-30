@@ -7,8 +7,11 @@ using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.EntityFrameworkCore;
 using CLDV6211_POE_PartThree.Data;
 using CLDV6211_POE_PartThree.Models;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.AspNetCore.Components.Forms;
 
-namespace CLDV6211_POE_PartThree.Controllers
+
+namespace EventEaseTestApp.Controllers
 {
     public class EventsController : Controller
     {
@@ -20,9 +23,24 @@ namespace CLDV6211_POE_PartThree.Controllers
         }
 
         // GET: Events
-        public async Task<IActionResult> Index()
+        public async Task<IActionResult> Index(string searchString)
         {
-            return View(await _context.Event.ToListAsync());
+
+            if (_context.Event == null)
+            {
+                return Problem("Entity set 'EventEaseTestAppContext.'  is null.");
+            }
+
+            var events = from m in _context.Event
+                         select m;
+
+            if (!String.IsNullOrEmpty(searchString))
+            {
+                events = events.Where(s => s.EventName!.ToUpper().Contains(searchString.ToUpper()));
+            }
+
+
+            return View(await events.ToListAsync());
         }
 
         // GET: Events/Details/5
@@ -54,7 +72,7 @@ namespace CLDV6211_POE_PartThree.Controllers
         // For more details, see http://go.microsoft.com/fwlink/?LinkId=317598.
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public async Task<IActionResult> Create([Bind("EventId,EventName,Description,EventDate")] Event @event)
+        public async Task<IActionResult> Create([Bind("EventName,Description,EventDate")] Event @event)
         {
             if (ModelState.IsValid)
             {
@@ -66,12 +84,9 @@ namespace CLDV6211_POE_PartThree.Controllers
         }
 
         // GET: Events/Edit/5
-        public async Task<IActionResult> Edit(int? id)
+        public async Task<IActionResult> Edit(int id)
         {
-            if (id == null)
-            {
-                return NotFound();
-            }
+
 
             var @event = await _context.Event.FindAsync(id);
             if (@event == null)
@@ -139,12 +154,20 @@ namespace CLDV6211_POE_PartThree.Controllers
         [ValidateAntiForgeryToken]
         public async Task<IActionResult> DeleteConfirmed(int id)
         {
-            var @event = await _context.Event.FindAsync(id);
-            if (@event != null)
+            bool isBookingExists = await _context.Booking.AnyAsync(b => b.EventId == id);
+
+
+            // Check if there are any bookings associated with the event
+            if (isBookingExists)
             {
-                _context.Event.Remove(@event);
+                var @event = await _context.Event.FindAsync(id);
+                ModelState.AddModelError("", "Cannot delete event as it has associated bookings.");
+                return View(@event);
             }
 
+            var eventToDelete = await _context.Event.FindAsync(id);
+
+            _context.Event.Remove(eventToDelete);
             await _context.SaveChangesAsync();
             return RedirectToAction(nameof(Index));
         }
@@ -153,5 +176,11 @@ namespace CLDV6211_POE_PartThree.Controllers
         {
             return _context.Event.Any(e => e.EventId == id);
         }
+
+
     }
 }
+//var events = await _context.Event
+//                .Where(e => e.EventDate >= start && e.EventDate <= end)
+//                .ToListAsync();
+//return events.Any();
