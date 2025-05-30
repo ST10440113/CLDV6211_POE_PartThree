@@ -7,8 +7,11 @@ using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.EntityFrameworkCore;
 using CLDV6211_POE_PartThree.Data;
 using CLDV6211_POE_PartThree.Models;
+using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Components.Forms;
 
-namespace CLDV6211_POE_PartThree.Controllers
+
+namespace EventEaseTestApp.Controllers
 {
     public class BookingsController : Controller
     {
@@ -19,12 +22,70 @@ namespace CLDV6211_POE_PartThree.Controllers
             _context = context;
         }
 
+        public void PopulateEventList()
+        {
+            IEnumerable<SelectListItem> eventList = _context.Event.Select(e => new SelectListItem
+            {
+                Text = e.EventName,
+                Value = e.EventId.ToString(),
+
+            });
+            ViewBag.EventList = eventList;
+
+        }
+
+
+        public void PopulateVenueList()
+        {
+            IEnumerable<SelectListItem> venueList = _context.Venue.Select(e => new SelectListItem
+            {
+                Text = e.VenueName,
+                Value = e.VenueId.ToString(),
+
+            });
+            ViewBag.VenueList = venueList;
+
+        }
+
         // GET: Bookings
+
         public async Task<IActionResult> Index()
         {
-            var cLDV6211_POE_PartThreeContext = _context.Booking.Include(b => b.Event).Include(b => b.Venue);
-            return View(await cLDV6211_POE_PartThreeContext.ToListAsync());
+            var bookingList = _context.Booking.ToList();
+            foreach (var booking in bookingList)
+            {
+                booking.Event = _context.Event.FirstOrDefault(e => e.EventId == booking.EventId);
+                booking.Venue = _context.Venue.FirstOrDefault(v => v.VenueId == booking.VenueId);
+            }
+            return View(await _context.Booking.ToListAsync());
         }
+
+
+        public async Task<IActionResult> EnhancedBookingView(string searchString)
+        {
+            var bookingList = _context.Booking.ToList();
+            foreach (var booking in bookingList)
+            {
+                booking.Event = _context.Event.FirstOrDefault(e => e.EventId == booking.EventId);
+                booking.Venue = _context.Venue.FirstOrDefault(v => v.VenueId == booking.VenueId);
+            }
+            if (_context.Booking == null)
+            {
+                return Problem("Entity set 'EventEaseTestAppContext.'  is null.");
+            }
+
+            var bookings = from m in _context.Booking
+                           select m;
+
+            if (!String.IsNullOrEmpty(searchString))
+            {
+                bookings = bookings.Where(s => s.Event.EventName!.ToUpper().Contains(searchString.ToUpper()));
+            }
+
+
+            return View(await bookings.ToListAsync());
+        }
+
 
         // GET: Bookings/Details/5
         public async Task<IActionResult> Details(int? id)
@@ -49,8 +110,8 @@ namespace CLDV6211_POE_PartThree.Controllers
         // GET: Bookings/Create
         public IActionResult Create()
         {
-            ViewData["EventId"] = new SelectList(_context.Event, "EventId", "EventId");
-            ViewData["VenueId"] = new SelectList(_context.Venue, "VenueId", "VenueId");
+            PopulateEventList();
+            PopulateVenueList();
             return View();
         }
 
@@ -61,32 +122,47 @@ namespace CLDV6211_POE_PartThree.Controllers
         [ValidateAntiForgeryToken]
         public async Task<IActionResult> Create([Bind("BookingId,EventId,VenueId,BookingStartDate,BookingEndDate")] Booking booking)
         {
+            var @event = await _context.Event.FindAsync(booking.EventId);
+            var @venue = await _context.Venue.FindAsync(booking.VenueId);
+
+
+            bool checkForDuplicate = await _context.Booking.AnyAsync(i => i.Event.EventDate.Equals(@event.EventDate) &&
+            i.Venue.VenueName.Equals(@venue.VenueName));
+
+
+            if (checkForDuplicate == true)
+            {
+                ModelState.AddModelError(nameof(Event.EventId), "There is an existing booking with the same venue and date of event.");
+
+                PopulateEventList();
+                PopulateVenueList();
+
+            }
             if (ModelState.IsValid)
             {
                 _context.Add(booking);
                 await _context.SaveChangesAsync();
                 return RedirectToAction(nameof(Index));
             }
+
             ViewData["EventId"] = new SelectList(_context.Event, "EventId", "EventId", booking.EventId);
             ViewData["VenueId"] = new SelectList(_context.Venue, "VenueId", "VenueId", booking.VenueId);
+
+
+
             return View(booking);
         }
+
+
 
         // GET: Bookings/Edit/5
         public async Task<IActionResult> Edit(int? id)
         {
-            if (id == null)
-            {
-                return NotFound();
-            }
-
+            PopulateEventList();
+            PopulateVenueList();
             var booking = await _context.Booking.FindAsync(id);
-            if (booking == null)
-            {
-                return NotFound();
-            }
-            ViewData["EventId"] = new SelectList(_context.Event, "EventId", "EventId", booking.EventId);
-            ViewData["VenueId"] = new SelectList(_context.Venue, "VenueId", "VenueId", booking.VenueId);
+
+
             return View(booking);
         }
 
@@ -166,5 +242,15 @@ namespace CLDV6211_POE_PartThree.Controllers
         {
             return _context.Booking.Any(e => e.BookingId == id);
         }
+
+        //public async Task<bool> IsDateWithinRangeAsync(DateTime start, DateTime end)
+        //{
+        //    var range = await _context.DateRange.FirstOrDefaultAsync();
+        //    if (range == null)
+        //    {
+        //        return false; // No date range defined
+        //    }
+        //    return inputDate >= range.StartDate && inputDate <= range.EndDate;
+
     }
 }
